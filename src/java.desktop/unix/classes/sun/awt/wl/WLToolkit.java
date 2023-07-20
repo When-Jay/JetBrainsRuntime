@@ -28,6 +28,7 @@ package sun.awt.wl;
 
 import jdk.internal.misc.InnocuousThread;
 import sun.awt.AWTAccessor;
+import sun.awt.AWTPermissions;
 import sun.awt.AppContext;
 import sun.awt.LightweightFrame;
 import sun.awt.PeerEvent;
@@ -134,6 +135,8 @@ public class WLToolkit extends UNIXToolkit implements Runnable {
     private static final int AWT_MULTICLICK_DEFAULT_TIME_MS = 500;
 
     private static boolean initialized = false;
+    private static Thread toolkitThread;
+    private WLClipboard clipboard;
 
     private static native void initIDs();
 
@@ -155,7 +158,7 @@ public class WLToolkit extends UNIXToolkit implements Runnable {
         });
 
         if (!GraphicsEnvironment.isHeadless()) {
-            Thread toolkitThread = InnocuousThread.newThread("AWT-Wayland", this);
+            toolkitThread = InnocuousThread.newThread("AWT-Wayland", this);
             toolkitThread.setDaemon(true);
             toolkitThread.start();
 
@@ -165,6 +168,10 @@ public class WLToolkit extends UNIXToolkit implements Runnable {
 
             // Wait here for all display sync events to have been received?
         }
+    }
+
+    public static boolean isToolkitThread() {
+        return Thread.currentThread() == toolkitThread;
     }
 
     @Override
@@ -738,8 +745,7 @@ public class WLToolkit extends UNIXToolkit implements Runnable {
 
     @Override
     public DataTransferer getDataTransferer() {
-        log.info("Not implemented: WLToolkit.getDataTransferer()");
-        return null;
+        return WLDataTransferer.getInstanceImpl();
     }
 
     @Override
@@ -766,8 +772,19 @@ public class WLToolkit extends UNIXToolkit implements Runnable {
 
     @Override
     public  Clipboard getSystemClipboard() {
-        log.info("Not implemented: WLToolkit.getSystemClipboard()");
-        return null;
+        @SuppressWarnings("removal")
+        SecurityManager security = System.getSecurityManager();
+        if (security != null) {
+            security.checkPermission(AWTPermissions.ACCESS_CLIPBOARD_PERMISSION);
+        }
+
+        synchronized (this) {
+            if (clipboard == null) {
+                clipboard = new WLClipboard("System");
+            }
+        }
+
+        return clipboard;
     }
 
     @Override

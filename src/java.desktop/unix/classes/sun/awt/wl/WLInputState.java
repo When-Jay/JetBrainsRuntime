@@ -46,7 +46,8 @@ record WLInputState(WLPointerEvent eventWithSurface,
                     PointerButtonEvent pointerButtonPressedEvent,
                     int modifiers,
                     long surfaceForKeyboardInput,
-                    boolean isPointerOverSurface) {
+                    boolean isPointerOverSurface,
+                    long keyboardEnterSerial) {
     /**
      * Groups together information about a mouse pointer button event.
      * @param surface 'struct wl_surface*' the button was pressed over
@@ -60,7 +61,7 @@ record WLInputState(WLPointerEvent eventWithSurface,
 
     static WLInputState initialState() {
         return new WLInputState(null, null, null, null,
-                null, 0, 0, false);
+                null, 0, 0, false, 0);
     }
 
     /**
@@ -92,7 +93,8 @@ record WLInputState(WLPointerEvent eventWithSurface,
                 newPointerButtonEvent,
                 newModifiers,
                 surfaceForKeyboardInput,
-                newPointerOverSurface);
+                newPointerOverSurface,
+                keyboardEnterSerial);
     }
 
     public WLInputState updatedFromKeyboardEnterEvent(long serial, long surfacePtr) {
@@ -105,7 +107,8 @@ record WLInputState(WLPointerEvent eventWithSurface,
                 pointerButtonPressedEvent,
                 modifiers,
                 surfacePtr,
-                isPointerOverSurface);
+                isPointerOverSurface,
+                serial);
     }
 
     public WLInputState updatedFromKeyboardModifiersEvent(long serial, int keyboardModifiers) {
@@ -120,7 +123,8 @@ record WLInputState(WLPointerEvent eventWithSurface,
                 pointerButtonPressedEvent,
                 newModifiers,
                 surfaceForKeyboardInput,
-                isPointerOverSurface);
+                isPointerOverSurface,
+                keyboardEnterSerial);
     }
 
     public WLInputState updatedFromKeyboardLeaveEvent(long serial, long surfacePtr) {
@@ -135,7 +139,8 @@ record WLInputState(WLPointerEvent eventWithSurface,
                 pointerButtonPressedEvent,
                 newModifiers,
                 0,
-                isPointerOverSurface);
+                isPointerOverSurface,
+                keyboardEnterSerial);
     }
 
     public WLInputState resetPointerState() {
@@ -147,7 +152,8 @@ record WLInputState(WLPointerEvent eventWithSurface,
                 pointerButtonPressedEvent,
                 0,
                 surfaceForKeyboardInput,
-                false);
+                false,
+                keyboardEnterSerial);
     }
 
     private PointerButtonEvent getNewPointerButtonEvent(WLPointerEvent pointerEvent,
