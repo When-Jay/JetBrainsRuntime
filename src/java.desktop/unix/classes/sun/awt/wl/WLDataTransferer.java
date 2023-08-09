@@ -25,16 +25,24 @@
 package sun.awt.wl;
 
 import sun.awt.datatransfer.DataTransferer;
-import sun.awt.datatransfer.SunClipboard;
 import sun.awt.datatransfer.ToolkitThreadBlockedHandler;
+import sun.datatransfer.DataFlavorUtil;
 
+import javax.imageio.ImageIO;
+import javax.imageio.ImageReader;
+import javax.imageio.ImageTypeSpecifier;
+import javax.imageio.ImageWriter;
+import javax.imageio.spi.ImageWriterSpi;
 import java.awt.Image;
 import java.awt.datatransfer.DataFlavor;
+import java.awt.image.BufferedImage;
+import java.awt.image.ColorModel;
+import java.awt.image.WritableRaster;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
+import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.HashMap;
 
@@ -53,7 +61,7 @@ public class WLDataTransferer extends DataTransferer {
 
     @Override
     public String getDefaultUnicodeEncoding() {
-        return "iso-10646-ucs-2";
+        return "utf-8";
     }
 
     @Override
@@ -63,26 +71,33 @@ public class WLDataTransferer extends DataTransferer {
 
     @Override
     public boolean isFileFormat(long format) {
-        // TODO
-        String name = getNativeForFormat(format);
-        System.out.println(name);
-        try {
-            var dataFlavor = new DataFlavor(name);
-            System.out.println(dataFlavor.getPrimaryType());
-            // TODO
-            return "TODO".equals(dataFlavor.getPrimaryType());
-        } catch (ClassNotFoundException e) {
-            return false;
-        }
+        String nat = getNativeForFormat(format);
+        return "FILE_NAME".equals(nat);
     }
 
     @Override
     public boolean isImageFormat(long format) {
         // TODO: cache the result?
-        String name = getNativeForFormat(format);
-        System.out.println(name);
-        List<DataFlavor> dataFlavor = SunClipboard.getDefaultFlavorTable().getFlavorsForNative(name);
-        return dataFlavor.stream().anyMatch(df -> "image".equals(df.getPrimaryType()));
+        return isMimeFormat(format, "image");
+    }
+
+    private boolean isMimeFormat(long format, String primaryType) {
+        String nat = getNativeForFormat(format);
+
+        if (nat == null) {
+            return false;
+        }
+
+        try {
+            DataFlavor df = new DataFlavor(nat);
+            if (primaryType.equals(df.getPrimaryType())) {
+                return true;
+            }
+        } catch (Exception e) {
+            // Not a MIME format.
+        }
+
+        return false;
     }
 
     @Override
@@ -92,6 +107,7 @@ public class WLDataTransferer extends DataTransferer {
             Long thisID = nameToLong.putIfAbsent(formatName, nextID);
             if (thisID == null) {
                 longToName.put(nextID, formatName);
+                thisID = nextID;
             }
             return thisID;
         }
@@ -105,7 +121,7 @@ public class WLDataTransferer extends DataTransferer {
     }
 
     @Override
-    protected ByteArrayOutputStream convertFileListToBytes(ArrayList<String> fileList) throws IOException {
+    protected ByteArrayOutputStream convertFileListToBytes(ArrayList<String> fileList) {
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
         for (int i = 0; i < fileList.size(); i++)
         {
@@ -118,21 +134,141 @@ public class WLDataTransferer extends DataTransferer {
 
     @Override
     protected String[] dragQueryFile(byte[] bytes) {
+        // TODO
         return new String[0];
     }
 
     @Override
     protected Image platformImageBytesToImage(byte[] bytes, long format) throws IOException {
+        // TODO
         return null;
     }
 
     @Override
     protected byte[] imageToPlatformBytes(Image image, long format) throws IOException {
+        // TODO
         return new byte[0];
     }
 
     @Override
     public ToolkitThreadBlockedHandler getToolkitThreadBlockedHandler() {
         return WLToolkitThreadBlockedHandler.getToolkitThreadBlockedHandler();
+    }
+
+    @Override
+    public LinkedHashSet<DataFlavor> getPlatformMappingsForNative(String nat) {
+        // TODO: much of this has been taken verbatim from XDataTransferer.
+        //  Worth refactoring common stuff out?
+        LinkedHashSet<DataFlavor> flavors = new LinkedHashSet<>();
+
+        if (nat == null) {
+            return flavors;
+        }
+
+        DataFlavor df;
+        try {
+            df = new DataFlavor(nat);
+        } catch (Exception e) {
+            // The string doesn't constitute a valid MIME type.
+            return flavors;
+        }
+
+        DataFlavor value = df;
+        final String primaryType = df.getPrimaryType();
+
+        // For text formats we map natives to MIME strings instead of data
+        // flavors to enable dynamic text native-to-flavor mapping generation.
+        // See SystemFlavorMap.getFlavorsForNative() for details.
+        if ("image".equals(primaryType)) {
+            final String baseType = primaryType + "/" + df.getSubType();
+            Iterator<ImageReader> readers = ImageIO.getImageReadersByMIMEType(baseType);
+            if (readers.hasNext()) {
+                flavors.add(DataFlavor.imageFlavor);
+            }
+        }
+
+        flavors.add(value);
+
+        return flavors;
+    }
+
+    private static ImageTypeSpecifier defaultSpecifier = null;
+
+    private ImageTypeSpecifier getDefaultImageTypeSpecifier() {
+        if (defaultSpecifier == null) {
+            ColorModel model = ColorModel.getRGBdefault();
+            WritableRaster raster =
+                    model.createCompatibleWritableRaster(10, 10);
+
+            BufferedImage bufferedImage =
+                    new BufferedImage(model, raster, model.isAlphaPremultiplied(),
+                            null);
+
+            defaultSpecifier = new ImageTypeSpecifier(bufferedImage);
+        }
+
+        return defaultSpecifier;
+    }
+
+    @Override
+    public LinkedHashSet<String> getPlatformMappingsForFlavor(DataFlavor df) {
+        LinkedHashSet<String> natives = new LinkedHashSet<>(1);
+
+        if (df == null) {
+            return natives;
+        }
+
+        String charset = df.getParameter("charset");
+        String baseType = df.getPrimaryType() + "/" + df.getSubType();
+        String mimeType = baseType;
+
+        if (charset != null && DataFlavorUtil.isFlavorCharsetTextType(df)) {
+            mimeType += ";charset=" + charset;
+        }
+
+        // Add a mapping to the MIME native whenever the representation class
+        // doesn't require translation.
+        if (df.getRepresentationClass() != null &&
+                (df.isRepresentationClassInputStream() ||
+                        df.isRepresentationClassByteBuffer() ||
+                        byte[].class.equals(df.getRepresentationClass()))) {
+            natives.add(mimeType);
+        }
+
+        if (DataFlavor.imageFlavor.equals(df)) {
+            String[] mimeTypes = ImageIO.getWriterMIMETypes();
+            if (mimeTypes != null) {
+                for (String mime : mimeTypes) {
+                    Iterator<ImageWriter> writers = ImageIO.getImageWritersByMIMEType(mime);
+                    while (writers.hasNext()) {
+                        ImageWriter imageWriter = writers.next();
+                        ImageWriterSpi writerSpi = imageWriter.getOriginatingProvider();
+
+                        if (writerSpi != null &&
+                                writerSpi.canEncodeImage(getDefaultImageTypeSpecifier())) {
+                            natives.add(mime);
+                            break;
+                        }
+                    }
+                }
+            }
+        } else if (DataFlavorUtil.isFlavorCharsetTextType(df)) {
+            // stringFlavor is semantically equivalent to the standard
+            // "text/plain" MIME type.
+            if (DataFlavor.stringFlavor.equals(df)) {
+                baseType = "text/plain";
+            }
+
+            for (String encoding : DataFlavorUtil.standardEncodings()) {
+                if (!encoding.equals(charset)) {
+                    natives.add(baseType + ";charset=" + encoding);
+                }
+            }
+
+            // Add a MIME format without specified charset.
+            natives.add(baseType);
+        }
+
+        return natives;
     }
 }

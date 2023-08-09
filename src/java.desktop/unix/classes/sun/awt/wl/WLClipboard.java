@@ -34,31 +34,44 @@ import java.util.SortedMap;
 
 public final class WLClipboard extends SunClipboard {
 
-    public WLClipboard(String name) {
+    private final long ID;
+    private long nativeContext; // guarded by this
+
+    public WLClipboard(String name, boolean isPrimary) {
         super(name);
-        initNative();
+        ID = initNative(isPrimary);
     }
 
     @Override
     public long getID() {
-        return 0;
+        return ID;
     }
 
     @Override
     protected void clearNativeContext() {
-
+        synchronized (this) {
+            cancelOffer(nativeContext);
+        }
     }
 
     @Override
     protected void setContentsNative(Transferable contents) {
         long keyboardEnterSerial = WLToolkit.getInputState().keyboardEnterSerial();
         if (keyboardEnterSerial != 0) {
-            DataFlavor[] flavors = contents.getTransferDataFlavors();
-            String[] mime = new String[flavors.length];
-            for (int i = 0; i < flavors.length; i++) {
-                mime[i] = flavors[i].getMimeType();
+            WLDataTransferer wlDataTransferer = (WLDataTransferer) DataTransferer.getInstance();
+            long[] formats = wlDataTransferer.getFormatsForTransferableAsArray
+                    (contents, DataTransferer.adaptFlavorMap(getDefaultFlavorTable()));
+
+            if (formats.length > 0) {
+                String[] mime = new String[formats.length];
+                for (int i = 0; i < formats.length; i++) {
+                    mime[i] = wlDataTransferer.getNativeForFormat(formats[i]);
+                }
+
+                synchronized (this) {
+                    nativeContext = offerData(keyboardEnterSerial, mime, contents);
+                }
             }
-            offerData(keyboardEnterSerial, mime, contents);
         }
     }
 
@@ -103,6 +116,7 @@ public final class WLClipboard extends SunClipboard {
 
     }
 
-    private native void initNative();
-    private native void offerData(long keyboardEnterSerial, String[] mime, Object data);
+    private native long initNative(boolean isPrimary);
+    private native long offerData(long keyboardEnterSerial, String[] mime, Object data);
+    private native void cancelOffer(long nativePtr);
 }

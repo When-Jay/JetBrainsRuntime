@@ -86,6 +86,7 @@ import java.security.PrivilegedAction;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Properties;
 import java.util.Timer;
 import java.util.TimerTask;
@@ -136,7 +137,9 @@ public class WLToolkit extends UNIXToolkit implements Runnable {
 
     private static boolean initialized = false;
     private static Thread toolkitThread;
-    private WLClipboard clipboard;
+    private WLClipboard clipboard; // guarded by this
+    private WLClipboard selection; // guarded by this
+    private boolean isSelectionAvailabilityChecked; // guarded by this
 
     private static native void initIDs();
 
@@ -780,7 +783,7 @@ public class WLToolkit extends UNIXToolkit implements Runnable {
 
         synchronized (this) {
             if (clipboard == null) {
-                clipboard = new WLClipboard("System");
+                clipboard = new WLClipboard("System", false);
             }
         }
 
@@ -789,8 +792,21 @@ public class WLToolkit extends UNIXToolkit implements Runnable {
 
     @Override
     public Clipboard getSystemSelection() {
-        log.info("Not implemented: WLToolkit.getSystemSelection()");
-        return null;
+        @SuppressWarnings("removal")
+        SecurityManager security = System.getSecurityManager();
+        if (security != null) {
+            security.checkPermission(AWTPermissions.ACCESS_CLIPBOARD_PERMISSION);
+        }
+        synchronized (this) {
+            if (selection == null && !isSelectionAvailabilityChecked) {
+                isSelectionAvailabilityChecked = true;
+                try {
+                    selection = new WLClipboard("Selection", true);
+                } catch (UnsupportedOperationException ignored) {
+                }
+            }
+        }
+        return selection;
     }
 
     @Override

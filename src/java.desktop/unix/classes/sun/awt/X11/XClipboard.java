@@ -87,7 +87,17 @@ public final class XClipboard extends SunClipboard implements OwnershipListener
         SortedMap<Long,DataFlavor> formatMap =
             DataTransferer.getInstance().getFormatsForTransferable
                 (contents, DataTransferer.adaptFlavorMap(getDefaultFlavorTable()));
+        System.out.println("Offering these formats of the clipboard:");
+
+        for (var f: formatMap.values()) {
+            System.out.println(f);
+        }
         long[] formats = DataTransferer.keysToLongArray(formatMap);
+        XDataTransferer xDataTransferer = (XDataTransferer) DataTransferer.getInstance();
+        System.out.println("Native formats:");
+        for (var format: formats) {
+            System.out.println(xDataTransferer.getNativeForFormat(format));
+        }
 
         if (!selection.setOwner(contents, formatMap, formats,
                                 XToolkit.getCurrentServerTime())) {
