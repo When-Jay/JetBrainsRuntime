@@ -25,12 +25,37 @@
 
 #include <unistd.h>
 #include <string.h>
-#include "jni.h"
-#include "jni_util.h"
+#include <stdlib.h>
+#include <assert.h>
 
+#include "JNIUtilities.h"
 #include "sun_awt_wl_WLClipboard.h"
 #include "wayland-client-protocol.h"
 #include "WLToolkit.h"
+
+static jmethodID transferContentsWithTypeMID;
+
+typedef struct DataSourcePayload {
+    jobject clipboard; // a global reference to WLClipboard
+    jobject content;   // a global reference to Transferrable
+} DataSourcePayload;
+
+static DataSourcePayload *
+DataSourcePayload_Create(jobject clipboard, jobject content)
+{
+    DataSourcePayload * payload = malloc(sizeof(struct DataSourcePayload));
+    if (payload) {
+        payload->clipboard = clipboard;
+        payload->content = content;
+    }
+    return payload;
+}
+
+static void
+DataSourcePayload_Destroy(DataSourcePayload* payload)
+{
+    free(payload);
+}
 
 static struct wl_data_device *wl_data_device;
 
@@ -107,33 +132,43 @@ static void wl_data_source_handle_send(
         int fd)
 {
     // TODO: call transferContentsWithType() from here
+    DataSourcePayload * payload = data;
+    assert(payload);
 
-    printf("Transferring clipboard content to fd=%d for mime_type=%s\n", fd, mime_type);
-    // An application wants to paste the clipboard contents
-    if (strcmp(mime_type, "text/plain;charset=utf-8") == 0) {
-        write(fd, "hello from wayland", strlen("hello from wayland"));
-    } else if (strcmp(mime_type, "text/html") == 0) {
-        write(fd, "<b>hello from wayland</b>", strlen("<b>hello from wayland</b>"));
-    } else {
-        fprintf(stderr,
-                "Destination client requested unsupported MIME type: %s\n",
-                mime_type);
+    JNIEnv *env = getEnv();
+    jstring mime_type_string = (*env)->NewStringUTF(env, mime_type);
+    if (payload->clipboard != NULL && payload->content != NULL && mime_type_string != NULL && fd >= 0) {
+        (*env)->CallVoidMethod(env,
+                               payload->clipboard,
+                               transferContentsWithTypeMID,
+                               payload->content,
+                               mime_type_string,
+                               fd);
+
+        EXCEPTION_CLEAR(env);
     }
 
-    close(fd);
+    if (mime_type_string != NULL) {
+        (*env)->DeleteLocalRef(env, mime_type_string);
+    }
+
+    //close(fd);
 }
 
 static void wl_data_source_handle_cancelled(
         void *data,
         struct wl_data_source *source)
 {
-    jobject content = (jobject)data;
-    if (content != NULL) {
+    DataSourcePayload * payload = data;
+    if (payload != NULL) {
         JNIEnv* env = getEnv();
-        (*env)->DeleteGlobalRef(env, content);
+
+        if (payload->clipboard != NULL) (*env)->DeleteGlobalRef(env, payload->clipboard);
+        if (payload->content != NULL) (*env)->DeleteGlobalRef(env, payload->content);
+
+        DataSourcePayload_Destroy(payload);
+        payload = NULL;
     }
-    printf("Clipboard content cleared/replaced\n");
-    // An application has replaced the clipboard contents
     wl_data_source_destroy(source);
 }
 
@@ -141,6 +176,29 @@ static const struct wl_data_source_listener wl_data_source_listener = {
         .send = wl_data_source_handle_send,
         .cancelled = wl_data_source_handle_cancelled
 };
+
+static jboolean
+initJavaRefs(JNIEnv* env, jclass wlClipboardClass)
+{
+    GET_METHOD_RETURN(transferContentsWithTypeMID,
+                      wlClipboardClass,
+                      "transferContentsWithType",
+                      "(Ljava/awt/datatransfer/Transferable;Ljava/lang/String;I)V",
+                      JNI_FALSE);
+
+    return JNI_TRUE;
+}
+
+JNIEXPORT void JNICALL
+Java_sun_awt_wl_WLClipboard_initIDs(
+        JNIEnv *env,
+        jclass wlClipboardClass)
+{
+    if (!initJavaRefs(env, wlClipboardClass)) {
+        JNU_ThrowInternalError(env, "Failed to find WLClipboard members");
+        return;
+    }
+}
 
 JNIEXPORT jlong JNICALL
 Java_sun_awt_wl_WLClipboard_initNative(
@@ -170,10 +228,17 @@ Java_sun_awt_wl_WLClipboard_offerData(
         jobjectArray mimeTypes,
         jobject content)
 {
+    jobject clipboardGlobalRef = (*env)->NewGlobalRef(env, obj); // deleted in wl_data_source_handle_cancelled()
+    CHECK_NULL_RETURN(clipboardGlobalRef, 0);
+    jobject contentGlobalRef = (*env)->NewGlobalRef(env, content); // deleted in wl_data_source_handle_cancelled()
+    CHECK_NULL_RETURN(contentGlobalRef, 0);
+
+    DataSourcePayload * payload = DataSourcePayload_Create(clipboardGlobalRef, contentGlobalRef);
+    CHECK_NULL_THROW_OOME_RETURN(env, payload, "failed to allocate memory for DataSourcepayload", 0);
+
     struct wl_data_source *source = wl_data_device_manager_create_data_source(wl_ddm);
     if (source != NULL) {
-        jobject contentGlobalRef = (*env)->NewGlobalRef(env, content);
-        wl_data_source_add_listener(source, &wl_data_source_listener, (void*)contentGlobalRef);
+        wl_data_source_add_listener(source, &wl_data_source_listener, payload);
 
         if (mimeTypes != NULL) {
             jint length = (*env)->GetArrayLength(env, mimeTypes);
@@ -187,6 +252,10 @@ Java_sun_awt_wl_WLClipboard_offerData(
         }
 
         wl_data_device_set_selection(wl_data_device, source, keyboardEnterSerial);
+    } else {
+        (*env)->DeleteGlobalRef(env, payload->clipboard);
+        (*env)->DeleteGlobalRef(env, payload->content);
+        DataSourcePayload_Destroy(payload);
     }
 
     return ptr_to_jlong(source);
@@ -196,10 +265,9 @@ JNIEXPORT void JNICALL
 Java_sun_awt_wl_WLClipboard_cancelOffer(
         JNIEnv *env,
         jobject obj,
-        jlong ptr)
+        jlong keyboardEnterSerial)
 {
-    struct wl_data_source *source = jlong_to_ptr(ptr);
-    if (source != NULL) {
-        wl_data_source_destroy(source);
-    }
+    // This should automatically deliver the "cancelled" event where we clean up
+    // both the previous source and the global reference to the transferrable object.
+    wl_data_device_set_selection(wl_data_device, NULL, keyboardEnterSerial);
 }

@@ -29,13 +29,19 @@ import sun.awt.datatransfer.SunClipboard;
 
 import java.awt.datatransfer.DataFlavor;
 import java.awt.datatransfer.Transferable;
+import java.io.FileDescriptor;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.util.Objects;
 import java.util.SortedMap;
 
 public final class WLClipboard extends SunClipboard {
 
     private final long ID;
-    private long nativeContext; // guarded by this
+
+    static {
+        initIDs();
+    }
 
     public WLClipboard(String name, boolean isPrimary) {
         super(name);
@@ -49,8 +55,9 @@ public final class WLClipboard extends SunClipboard {
 
     @Override
     protected void clearNativeContext() {
+        long keyboardEnterSerial = WLToolkit.getInputState().keyboardEnterSerial();
         synchronized (this) {
-            cancelOffer(nativeContext);
+            cancelOffer(keyboardEnterSerial);
         }
     }
 
@@ -68,15 +75,27 @@ public final class WLClipboard extends SunClipboard {
                     mime[i] = wlDataTransferer.getNativeForFormat(formats[i]);
                 }
 
-                synchronized (this) {
-                    nativeContext = offerData(keyboardEnterSerial, mime, contents);
-                }
+                offerData(keyboardEnterSerial, mime, contents);
             }
         }
     }
 
-    private int transferContentsWithType(Transferable contents, String mime) {
+    private void transferContentsWithType(Transferable contents, String mime, int destFD) {
         // Called from native
+        Objects.requireNonNull(contents);
+        Objects.requireNonNull(mime);
+        System.out.println("transferContentsWithType of " + contents + " to " + mime);
+
+        FileDescriptor javaDestFD = new FileDescriptor();
+        jdk.internal.access.SharedSecrets.getJavaIOFileDescriptorAccess().set(javaDestFD, destFD);
+
+        try (var out = new FileOutputStream(javaDestFD)) {
+            byte[] bytes = "hello from Wayland!".getBytes();
+            out.write(bytes);
+        } catch (IOException ignored) {
+        }
+
+        /*
         try {
             DataFlavor flavor = new DataFlavor(mime);
             if (contents.isDataFlavorSupported(flavor)) {
@@ -89,11 +108,10 @@ public final class WLClipboard extends SunClipboard {
                 // TODO: Use DataTransferer.convertData(), maybe?
                 // or  DataTransferer.getInstance().convertData() see XSelection.convertAndStore()
             }
-        } catch (ClassNotFoundException | IOException e) {
+        } catch (ClassNotFoundException | IllegalArgumentException | IOException e) {
             return -1;
         }
-
-        return 0;
+        */
     }
 
     @Override
@@ -116,7 +134,8 @@ public final class WLClipboard extends SunClipboard {
 
     }
 
+    private static native void initIDs();
     private native long initNative(boolean isPrimary);
     private native long offerData(long keyboardEnterSerial, String[] mime, Object data);
-    private native void cancelOffer(long nativePtr);
+    private native void cancelOffer(long keyboardEnterSerial);
 }
