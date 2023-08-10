@@ -26,22 +26,7 @@
 #include <wayland-client.h>
 #include <wayland-cursor.h>
 #include "xdg-shell-client-protocol.h"
-
-#define CHECK_NULL_THROW_OOME_RETURN(env, x, msg, z)\
-    do {                                        \
-        if ((x) == NULL) {                      \
-           JNU_ThrowOutOfMemoryError((env), (msg));\
-           return (z);                          \
-        }                                       \
-    } while(0)                                  \
-
-#define CHECK_NULL_THROW_IE(env, x, msg)        \
-    do {                                        \
-        if ((x) == NULL) {                      \
-           JNU_ThrowInternalError((env), (msg));\
-           return;                              \
-        }                                       \
-    } while(0)                                  \
+#include "primary-selection-client-protocol.h"
 
 extern struct wl_seat *wl_seat;
 extern struct wl_display *wl_display;
@@ -50,6 +35,7 @@ extern struct wl_compositor *wl_compositor;
 extern struct xdg_wm_base *xdg_wm_base;
 extern struct wl_cursor_theme *wl_cursor_theme;
 extern struct wl_data_device_manager *wl_ddm;
+extern struct zwp_primary_selection_device_manager_v1 *zwp_selection_dm;
 
 extern uint32_t last_mouse_pressed_serial;
 extern uint32_t last_pointer_enter_serial;

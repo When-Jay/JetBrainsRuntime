@@ -33,11 +33,16 @@
 #include "wayland-client-protocol.h"
 #include "WLToolkit.h"
 
-static jmethodID transferContentsWithTypeMID;
+// A type both zwp_primary_selection_source_v1* and wl_data_source*
+// are convertible to.
+typedef void* data_source_t;
+
+static jmethodID transferContentsWithTypeMID; // WLCipboard.transferContentsWithType()
+static jfieldID  isPrimaryFID; // WLClipboard.isPrimary
 
 typedef struct DataSourcePayload {
     jobject clipboard; // a global reference to WLClipboard
-    jobject content;   // a global reference to Transferrable
+    jobject content;   // a global reference to Transferable
 } DataSourcePayload;
 
 static DataSourcePayload *
@@ -57,7 +62,10 @@ DataSourcePayload_Destroy(DataSourcePayload* payload)
     free(payload);
 }
 
+// Clipboard "devices", one for the actual clipboard and one for the selection clipboard.
+// Implicitly assumed that WLClipboard can only create once instance of each.
 static struct wl_data_device *wl_data_device;
+static struct zwp_primary_selection_device_v1 *zwp_selection_device;
 
 static void data_device_handle_data_offer(
         void *data,
@@ -72,6 +80,44 @@ static void data_device_handle_selection(
 static const struct wl_data_device_listener wl_data_device_listener = {
         .data_offer = data_device_handle_data_offer,
         .selection = data_device_handle_selection,
+};
+
+static void
+zwp_selection_offer(
+        void *data,
+        struct zwp_primary_selection_offer_v1 *zwp_primary_selection_offer_v1,
+        const char *mime_type)
+{
+    printf("selection MIME type: %s\n", mime_type);
+}
+
+const struct zwp_primary_selection_offer_v1_listener zwp_selection_offer_listener = {
+        .offer = zwp_selection_offer
+};
+
+static void
+zwp_selection_device_handle_data_offer(
+        void *data,
+        struct zwp_primary_selection_device_v1 *device,
+        struct zwp_primary_selection_offer_v1 *offer)
+{
+    zwp_primary_selection_offer_v1_add_listener(offer, &zwp_selection_offer_listener, NULL);
+}
+
+static void
+zwp_selection_device_handle_selection(
+        void *data,
+        struct zwp_primary_selection_device_v1 *device,
+        struct zwp_primary_selection_offer_v1 *offer)
+{
+    if (offer != NULL) {
+        printf("Ready to receive selection\n");
+    }
+}
+
+static const struct zwp_primary_selection_device_v1_listener zwp_selection_device_listener = {
+        .data_offer = zwp_selection_device_handle_data_offer,
+        .selection = zwp_selection_device_handle_selection
 };
 
 static void wl_action(
@@ -125,16 +171,9 @@ static void data_device_handle_selection(
     }
 }
 
-static void wl_data_source_handle_send(
-        void *data,
-        struct wl_data_source *source,
-        const char *mime_type,
-        int fd)
+static void
+SendClipboardToFD(DataSourcePayload *payload, const char *mime_type, int fd)
 {
-    // TODO: call transferContentsWithType() from here
-    DataSourcePayload * payload = data;
-    assert(payload);
-
     JNIEnv *env = getEnv();
     jstring mime_type_string = (*env)->NewStringUTF(env, mime_type);
     if (payload->clipboard != NULL && payload->content != NULL && mime_type_string != NULL && fd >= 0) {
@@ -151,15 +190,11 @@ static void wl_data_source_handle_send(
     if (mime_type_string != NULL) {
         (*env)->DeleteLocalRef(env, mime_type_string);
     }
-
-    //close(fd);
 }
 
-static void wl_data_source_handle_cancelled(
-        void *data,
-        struct wl_data_source *source)
+static void
+CleanupClipboard(DataSourcePayload *payload)
 {
-    DataSourcePayload * payload = data;
     if (payload != NULL) {
         JNIEnv* env = getEnv();
 
@@ -167,14 +202,56 @@ static void wl_data_source_handle_cancelled(
         if (payload->content != NULL) (*env)->DeleteGlobalRef(env, payload->content);
 
         DataSourcePayload_Destroy(payload);
-        payload = NULL;
     }
+}
+
+static void wl_data_source_handle_send(
+        void *data,
+        struct wl_data_source *source,
+        const char *mime_type,
+        int fd)
+{
+    assert(data);
+    SendClipboardToFD(data, mime_type, fd);
+}
+
+static void wl_data_source_handle_cancelled(
+        void *data,
+        struct wl_data_source *source)
+{
+    CleanupClipboard(data);
     wl_data_source_destroy(source);
 }
 
 static const struct wl_data_source_listener wl_data_source_listener = {
         .send = wl_data_source_handle_send,
         .cancelled = wl_data_source_handle_cancelled
+};
+
+static void
+zwp_selection_source_handle_send(
+        void *data,
+        struct zwp_primary_selection_source_v1 *source,
+        const char *mime_type,
+        int32_t fd)
+{
+    DataSourcePayload * payload = data;
+    assert(payload);
+
+    SendClipboardToFD(payload, mime_type, fd);
+}
+
+void zwp_selection_source_handle_cancelled(
+        void *data,
+        struct zwp_primary_selection_source_v1 *source)
+{
+    CleanupClipboard(data);
+    zwp_primary_selection_source_v1_destroy(source);
+}
+
+static const struct zwp_primary_selection_source_v1_listener zwp_selection_source_listener = {
+        .send = zwp_selection_source_handle_send,
+        .cancelled = zwp_selection_source_handle_cancelled
 };
 
 static jboolean
@@ -186,7 +263,19 @@ initJavaRefs(JNIEnv* env, jclass wlClipboardClass)
                       "(Ljava/awt/datatransfer/Transferable;Ljava/lang/String;I)V",
                       JNI_FALSE);
 
+    GET_FIELD_RETURN(isPrimaryFID,
+                     wlClipboardClass,
+                     "isPrimary",
+                     "Z",
+                     JNI_FALSE);
+
     return JNI_TRUE;
+}
+
+static jboolean
+isPrimarySelectionClipboard(JNIEnv* env, jobject wlClipboard)
+{
+    return (*env)->GetBooleanField(env, wlClipboard, isPrimaryFID);
 }
 
 JNIEXPORT void JNICALL
@@ -208,13 +297,27 @@ Java_sun_awt_wl_WLClipboard_initNative(
 {
     if (!isPrimary) {
         // TODO: may be needed by DnD also, initialize in a common place
+        if (wl_data_device != NULL) {
+            JNU_ThrowByName(env, "java/lang/IllegalStateException", "one data device has already been created");
+            return 0;
+        }
         wl_data_device = wl_data_device_manager_get_data_device(wl_ddm, wl_seat);
         wl_data_device_add_listener(wl_data_device, &wl_data_device_listener, NULL);
     } else {
-        // Use zwp_primary_selection_device_manager_v1 or throw UOE if unavailable
-        JNU_ThrowByName(env,
-                        "java/lang/UnsupportedOperationException",
-                        "zwp_primary_selection_device_manager_v1 not available");
+        if (zwp_selection_dm != NULL) {
+            if (zwp_selection_device != NULL) {
+                JNU_ThrowByName(env,
+                                "java/lang/IllegalStateException",
+                                "one primary selection device has already been created");
+                return 0;
+            }
+            zwp_selection_device = zwp_primary_selection_device_manager_v1_get_device(zwp_selection_dm, wl_seat);
+            zwp_primary_selection_device_v1_add_listener(zwp_selection_device, &zwp_selection_device_listener, NULL);
+        } else {
+            JNU_ThrowByName(env,
+                            "java/lang/UnsupportedOperationException",
+                            "zwp_primary_selection_device_manager_v1 not available");
+        }
     }
 
     return ptr_to_jlong(wl_data_device);
@@ -236,23 +339,51 @@ Java_sun_awt_wl_WLClipboard_offerData(
     DataSourcePayload * payload = DataSourcePayload_Create(clipboardGlobalRef, contentGlobalRef);
     CHECK_NULL_THROW_OOME_RETURN(env, payload, "failed to allocate memory for DataSourcepayload", 0);
 
-    struct wl_data_source *source = wl_data_device_manager_create_data_source(wl_ddm);
+    const jboolean isPrimary = isPrimarySelectionClipboard(env, obj);
+    data_source_t source = isPrimary
+                    ? (data_source_t)zwp_primary_selection_device_manager_v1_create_source(zwp_selection_dm)
+                    : (data_source_t)wl_data_device_manager_create_data_source(wl_ddm);
+
     if (source != NULL) {
-        wl_data_source_add_listener(source, &wl_data_source_listener, payload);
+        if (isPrimary) {
+            zwp_primary_selection_source_v1_add_listener(
+                    (struct zwp_primary_selection_source_v1 *)source,
+                            &zwp_selection_source_listener,
+                            payload);
+        } else {
+            wl_data_source_add_listener(
+                    (struct wl_data_source *)source,
+                            &wl_data_source_listener,
+                            payload);
+        }
 
         if (mimeTypes != NULL) {
             jint length = (*env)->GetArrayLength(env, mimeTypes);
             for (jint i = 0; i < length; i++) {
                 jstring s = (*env)->GetObjectArrayElement(env, mimeTypes, i);
                 const char *mimeType = (*env)->GetStringUTFChars(env, s, JNI_FALSE);
-                wl_data_source_offer(source, mimeType);
+                if (isPrimary) {
+                    zwp_primary_selection_source_v1_offer((struct zwp_primary_selection_source_v1 *)source, mimeType);
+                } else {
+                    wl_data_source_offer((struct wl_data_source *)source, mimeType);
+                }
                 (*env)->ReleaseStringUTFChars(env, s, mimeType);
                 (*env)->DeleteLocalRef(env, s);
             }
         }
 
-        wl_data_device_set_selection(wl_data_device, source, keyboardEnterSerial);
+        if (isPrimary) {
+            zwp_primary_selection_device_v1_set_selection(zwp_selection_device,
+                                                          (struct zwp_primary_selection_source_v1 *)source,
+                                                          keyboardEnterSerial);
+        }
+        else {
+            wl_data_device_set_selection(wl_data_device,
+                                         (struct wl_data_source *)source,
+                                                 keyboardEnterSerial);
+        }
     } else {
+        // Failed to create a data source; give up and cleanup.
         (*env)->DeleteGlobalRef(env, payload->clipboard);
         (*env)->DeleteGlobalRef(env, payload->content);
         DataSourcePayload_Destroy(payload);
@@ -267,7 +398,14 @@ Java_sun_awt_wl_WLClipboard_cancelOffer(
         jobject obj,
         jlong keyboardEnterSerial)
 {
+    printf("cancelOffer\n");
+
     // This should automatically deliver the "cancelled" event where we clean up
-    // both the previous source and the global reference to the transferrable object.
-    wl_data_device_set_selection(wl_data_device, NULL, keyboardEnterSerial);
+    // both the previous source and the global reference to the transferable object.
+    const jboolean isPrimary = isPrimarySelectionClipboard(env, obj);
+    if (isPrimary) {
+        zwp_primary_selection_device_v1_set_selection(zwp_selection_device, NULL, keyboardEnterSerial);
+    } else {
+        wl_data_device_set_selection(wl_data_device, NULL, keyboardEnterSerial);
+    }
 }

@@ -38,6 +38,7 @@ import java.util.SortedMap;
 public final class WLClipboard extends SunClipboard {
 
     private final long ID;
+    private final boolean isPrimary;
 
     static {
         initIDs();
@@ -45,7 +46,8 @@ public final class WLClipboard extends SunClipboard {
 
     public WLClipboard(String name, boolean isPrimary) {
         super(name);
-        ID = initNative(isPrimary);
+        this.ID = initNative(isPrimary);
+        this.isPrimary = isPrimary;
     }
 
     @Override
