@@ -27,7 +27,9 @@ package sun.awt.wl;
 import sun.awt.datatransfer.DataTransferer;
 import sun.awt.datatransfer.SunClipboard;
 
+import javax.swing.SwingUtilities;
 import java.awt.datatransfer.DataFlavor;
+import java.awt.datatransfer.FlavorTable;
 import java.awt.datatransfer.Transferable;
 import java.io.FileDescriptor;
 import java.io.FileOutputStream;
@@ -42,7 +44,10 @@ public final class WLClipboard extends SunClipboard {
 
     static {
         initIDs();
+        flavorTable = DataTransferer.adaptFlavorMap(getDefaultFlavorTable());
     }
+
+    private final static FlavorTable flavorTable;
 
     public WLClipboard(String name, boolean isPrimary) {
         super(name);
@@ -68,8 +73,7 @@ public final class WLClipboard extends SunClipboard {
         long keyboardEnterSerial = WLToolkit.getInputState().keyboardEnterSerial();
         if (keyboardEnterSerial != 0) {
             WLDataTransferer wlDataTransferer = (WLDataTransferer) DataTransferer.getInstance();
-            long[] formats = wlDataTransferer.getFormatsForTransferableAsArray
-                    (contents, DataTransferer.adaptFlavorMap(getDefaultFlavorTable()));
+            long[] formats = wlDataTransferer.getFormatsForTransferableAsArray(contents, flavorTable);
 
             if (formats.length > 0) {
                 String[] mime = new String[formats.length];
@@ -86,34 +90,32 @@ public final class WLClipboard extends SunClipboard {
         // Called from native
         Objects.requireNonNull(contents);
         Objects.requireNonNull(mime);
-        System.out.println("transferContentsWithType of " + contents + " to " + mime);
-
-        FileDescriptor javaDestFD = new FileDescriptor();
-        jdk.internal.access.SharedSecrets.getJavaIOFileDescriptorAccess().set(javaDestFD, destFD);
-
-        try (var out = new FileOutputStream(javaDestFD)) {
-            byte[] bytes = "hello from Wayland!".getBytes();
-            out.write(bytes);
-        } catch (IOException ignored) {
+        if (!SwingUtilities.isEventDispatchThread()) {
+            throw new InternalError("Clipboard data transfer must be on EDT");
         }
+        assert SwingUtilities.isEventDispatchThread();
 
-        /*
+        WLDataTransferer wlDataTransferer = (WLDataTransferer) DataTransferer.getInstance();
+        SortedMap<Long,DataFlavor> formatMap =
+                wlDataTransferer.getFormatsForTransferable(contents, flavorTable);
+
         try {
-            DataFlavor flavor = new DataFlavor(mime);
-            if (contents.isDataFlavorSupported(flavor)) {
-                SortedMap<Long,DataFlavor> formatMap =
-                        DataTransferer.getInstance().getFormatsForTransferable
-                                (contents, DataTransferer.adaptFlavorMap(getDefaultFlavorTable()));
-                long format = 0; // TODO
-                byte[] data = DataTransferer.getInstance().convertData(
-                        this, contents, format, formatMap, WLToolkit.isToolkitThread());
-                // TODO: Use DataTransferer.convertData(), maybe?
-                // or  DataTransferer.getInstance().convertData() see XSelection.convertAndStore()
+            long targetFormat = wlDataTransferer.getFormatForNativeAsLong(mime);
+            DataFlavor flavor = formatMap.get(targetFormat);
+            if (flavor != null) {
+                byte[] bytes = wlDataTransferer.translateTransferable(contents, flavor, targetFormat);
+                FileDescriptor javaDestFD = new FileDescriptor();
+                jdk.internal.access.SharedSecrets.getJavaIOFileDescriptorAccess().set(javaDestFD, destFD);
+
+                try (var out = new FileOutputStream(javaDestFD)) {
+                    // TODO: large data transfer will block EDT for a long time;
+                    //  implement an option to do the writing on a dedicated thread.
+                    out.write(bytes);
+                } catch (IOException ignored) {
+                }
             }
-        } catch (ClassNotFoundException | IllegalArgumentException | IOException e) {
-            return -1;
+        } catch (IllegalArgumentException | IOException ignored) {
         }
-        */
     }
 
     @Override

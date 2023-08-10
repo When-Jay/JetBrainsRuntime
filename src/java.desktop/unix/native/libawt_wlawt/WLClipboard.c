@@ -183,10 +183,12 @@ SendClipboardToFD(DataSourcePayload *payload, const char *mime_type, int fd)
                                payload->content,
                                mime_type_string,
                                fd);
-
         EXCEPTION_CLEAR(env);
+    } else {
+        // The file is normally closed on the Java side, so only close here
+        // if the Java side wasn't involved.
+        close(fd);
     }
-
     if (mime_type_string != NULL) {
         (*env)->DeleteLocalRef(env, mime_type_string);
     }

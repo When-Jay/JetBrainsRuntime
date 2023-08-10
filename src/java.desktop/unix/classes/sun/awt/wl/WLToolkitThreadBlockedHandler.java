@@ -27,37 +27,32 @@ package sun.awt.wl;
 
 import sun.awt.datatransfer.ToolkitThreadBlockedHandler;
 
+// TODO: this class is essentially unused; not sure if it even has to be here
 final class WLToolkitThreadBlockedHandler implements
         ToolkitThreadBlockedHandler {
-    private static final ToolkitThreadBlockedHandler privelegedLock;
-
-    static {
-        privelegedLock = new WLToolkitThreadBlockedHandler();
-    }
-
+    private static final ToolkitThreadBlockedHandler privilegedLock = new WLToolkitThreadBlockedHandler();
     private static final WLToolkit tk = (WLToolkit) java.awt.Toolkit.getDefaultToolkit();
 
     private WLToolkitThreadBlockedHandler() {
     }
 
     static ToolkitThreadBlockedHandler getToolkitThreadBlockedHandler() {
-        return privelegedLock;
+        return privilegedLock;
     }
 
     public void lock() {
-        WLToolkit.awtLock();
+        throw new UnsupportedOperationException();
     }
 
     public void unlock() {
-        WLToolkit.awtUnlock();
+        throw new UnsupportedOperationException();
     }
 
     public void enter() {
-        // TODO: tk.run(WLToolkit.SECONDARY_LOOP);
+        throw new UnsupportedOperationException();
     }
 
     public void exit() {
-        // TODO
-        // XlibWrapper.ExitSecondaryLoop();
+        throw new UnsupportedOperationException();
     }
 }
