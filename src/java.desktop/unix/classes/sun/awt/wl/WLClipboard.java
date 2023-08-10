@@ -62,16 +62,18 @@ public final class WLClipboard extends SunClipboard {
 
     @Override
     protected void clearNativeContext() {
-        long keyboardEnterSerial = WLToolkit.getInputState().keyboardEnterSerial();
+        long eventSerial = WLToolkit.getInputState().eventWithSerial().getSerial();
         synchronized (this) {
-            cancelOffer(keyboardEnterSerial);
+            cancelOffer(eventSerial);
         }
     }
 
     @Override
     protected void setContentsNative(Transferable contents) {
-        long keyboardEnterSerial = WLToolkit.getInputState().keyboardEnterSerial();
-        if (keyboardEnterSerial != 0) {
+        // The server requires "serial number of the event that triggered this request"
+        // as a proof of the right to copy data.
+        long eventSerial = WLToolkit.getInputState().eventWithSerial().getSerial();
+        if (eventSerial != 0) {
             WLDataTransferer wlDataTransferer = (WLDataTransferer) DataTransferer.getInstance();
             long[] formats = wlDataTransferer.getFormatsForTransferableAsArray(contents, flavorTable);
 
@@ -81,7 +83,7 @@ public final class WLClipboard extends SunClipboard {
                     mime[i] = wlDataTransferer.getNativeForFormat(formats[i]);
                 }
 
-                offerData(keyboardEnterSerial, mime, contents);
+                offerData(eventSerial, mime, contents);
             }
         }
     }
@@ -140,6 +142,6 @@ public final class WLClipboard extends SunClipboard {
 
     private static native void initIDs();
     private native long initNative(boolean isPrimary);
-    private native long offerData(long keyboardEnterSerial, String[] mime, Object data);
-    private native void cancelOffer(long keyboardEnterSerial);
+    private native void offerData(long eventSerial, String[] mime, Object data);
+    private native void cancelOffer(long eventSerial);
 }

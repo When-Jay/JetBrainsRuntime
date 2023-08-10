@@ -47,7 +47,7 @@ record WLInputState(WLPointerEvent eventWithSurface,
                     int modifiers,
                     long surfaceForKeyboardInput,
                     boolean isPointerOverSurface,
-                    long keyboardEnterSerial) {
+                    long keyboardEnterSerial) { // TODO: this one is no longer used, drop it?
     /**
      * Groups together information about a mouse pointer button event.
      * @param surface 'struct wl_surface*' the button was pressed over

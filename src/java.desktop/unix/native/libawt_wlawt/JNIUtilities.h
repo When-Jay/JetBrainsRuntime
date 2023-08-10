@@ -6,6 +6,14 @@
 
 #define LOG_NULL(dst_var, name) // TODO?
 
+#define CHECK_NULL_THROW_OOME(env, x, msg)      \
+    do {                                        \
+        if ((x) == NULL) {                      \
+           JNU_ThrowOutOfMemoryError((env), (msg));\
+           return;                              \
+        }                                       \
+    } while(0)                                  \
+
 #define CHECK_NULL_THROW_OOME_RETURN(env, x, msg, z)\
     do {                                        \
         if ((x) == NULL) {                      \

@@ -207,7 +207,16 @@ CleanupClipboard(DataSourcePayload *payload)
     }
 }
 
-static void wl_data_source_handle_send(
+static void
+wl_data_source_target(void *data,
+               struct wl_data_source *wl_data_source,
+               const char *mime_type)
+{
+    // TODO
+}
+
+static void
+wl_data_source_handle_send(
         void *data,
         struct wl_data_source *source,
         const char *mime_type,
@@ -217,7 +226,8 @@ static void wl_data_source_handle_send(
     SendClipboardToFD(data, mime_type, fd);
 }
 
-static void wl_data_source_handle_cancelled(
+static void
+wl_data_source_handle_cancelled(
         void *data,
         struct wl_data_source *source)
 {
@@ -226,6 +236,7 @@ static void wl_data_source_handle_cancelled(
 }
 
 static const struct wl_data_source_listener wl_data_source_listener = {
+        .target = wl_data_source_target,
         .send = wl_data_source_handle_send,
         .cancelled = wl_data_source_handle_cancelled
 };
@@ -325,21 +336,21 @@ Java_sun_awt_wl_WLClipboard_initNative(
     return ptr_to_jlong(wl_data_device);
 }
 
-JNIEXPORT jlong JNICALL
+JNIEXPORT void JNICALL
 Java_sun_awt_wl_WLClipboard_offerData(
         JNIEnv *env,
         jobject obj,
-        jlong keyboardEnterSerial,
+        jlong eventSerial,
         jobjectArray mimeTypes,
         jobject content)
 {
-    jobject clipboardGlobalRef = (*env)->NewGlobalRef(env, obj); // deleted in wl_data_source_handle_cancelled()
-    CHECK_NULL_RETURN(clipboardGlobalRef, 0);
-    jobject contentGlobalRef = (*env)->NewGlobalRef(env, content); // deleted in wl_data_source_handle_cancelled()
-    CHECK_NULL_RETURN(contentGlobalRef, 0);
+    jobject clipboardGlobalRef = (*env)->NewGlobalRef(env, obj); // deleted by ...source_handle_cancelled()
+    CHECK_NULL(clipboardGlobalRef);
+    jobject contentGlobalRef = (*env)->NewGlobalRef(env, content); // deleted by ...source_handle_cancelled()
+    CHECK_NULL(contentGlobalRef);
 
     DataSourcePayload * payload = DataSourcePayload_Create(clipboardGlobalRef, contentGlobalRef);
-    CHECK_NULL_THROW_OOME_RETURN(env, payload, "failed to allocate memory for DataSourcepayload", 0);
+    CHECK_NULL_THROW_OOME(env, payload, "failed to allocate memory for DataSourcePayload");
 
     const jboolean isPrimary = isPrimarySelectionClipboard(env, obj);
     data_source_t source = isPrimary
@@ -377,12 +388,12 @@ Java_sun_awt_wl_WLClipboard_offerData(
         if (isPrimary) {
             zwp_primary_selection_device_v1_set_selection(zwp_selection_device,
                                                           (struct zwp_primary_selection_source_v1 *)source,
-                                                          keyboardEnterSerial);
+                                                          eventSerial);
         }
         else {
             wl_data_device_set_selection(wl_data_device,
                                          (struct wl_data_source *)source,
-                                                 keyboardEnterSerial);
+                                         eventSerial);
         }
     } else {
         // Failed to create a data source; give up and cleanup.
@@ -390,24 +401,20 @@ Java_sun_awt_wl_WLClipboard_offerData(
         (*env)->DeleteGlobalRef(env, payload->content);
         DataSourcePayload_Destroy(payload);
     }
-
-    return ptr_to_jlong(source);
 }
 
 JNIEXPORT void JNICALL
 Java_sun_awt_wl_WLClipboard_cancelOffer(
         JNIEnv *env,
         jobject obj,
-        jlong keyboardEnterSerial)
+        jlong eventSerial)
 {
-    printf("cancelOffer\n");
-
     // This should automatically deliver the "cancelled" event where we clean up
     // both the previous source and the global reference to the transferable object.
     const jboolean isPrimary = isPrimarySelectionClipboard(env, obj);
     if (isPrimary) {
-        zwp_primary_selection_device_v1_set_selection(zwp_selection_device, NULL, keyboardEnterSerial);
+        zwp_primary_selection_device_v1_set_selection(zwp_selection_device, NULL, eventSerial);
     } else {
-        wl_data_device_set_selection(wl_data_device, NULL, keyboardEnterSerial);
+        wl_data_device_set_selection(wl_data_device, NULL, eventSerial);
     }
 }
