@@ -62,7 +62,7 @@ public class WLDataTransferer extends DataTransferer {
 
     @Override
     public String getDefaultUnicodeEncoding() {
-        return "utf-8";
+        return "UTF-8";
     }
 
     @Override

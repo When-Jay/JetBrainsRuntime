@@ -137,9 +137,8 @@ public class WLToolkit extends UNIXToolkit implements Runnable {
 
     private static boolean initialized = false;
     private static Thread toolkitThread;
-    private WLClipboard clipboard; // guarded by this
-    private WLClipboard selection; // guarded by this
-    private boolean isSelectionAvailabilityChecked; // guarded by this
+    private final WLClipboard clipboard;
+    private final WLClipboard selection;
 
     private static native void initIDs();
 
@@ -171,6 +170,15 @@ public class WLToolkit extends UNIXToolkit implements Runnable {
 
             // Wait here for all display sync events to have been received?
         }
+
+        WLClipboard selectionClipboard = null;
+        try {
+            selectionClipboard = new WLClipboard("Selection", true);
+        } catch (UnsupportedOperationException ignored) {
+        }
+
+        clipboard = new WLClipboard("System", false);
+        selection = selectionClipboard;
     }
 
     public static boolean isToolkitThread() {
@@ -781,12 +789,6 @@ public class WLToolkit extends UNIXToolkit implements Runnable {
             security.checkPermission(AWTPermissions.ACCESS_CLIPBOARD_PERMISSION);
         }
 
-        synchronized (this) {
-            if (clipboard == null) {
-                clipboard = new WLClipboard("System", false);
-            }
-        }
-
         return clipboard;
     }
 
@@ -796,15 +798,6 @@ public class WLToolkit extends UNIXToolkit implements Runnable {
         SecurityManager security = System.getSecurityManager();
         if (security != null) {
             security.checkPermission(AWTPermissions.ACCESS_CLIPBOARD_PERMISSION);
-        }
-        synchronized (this) {
-            if (selection == null && !isSelectionAvailabilityChecked) {
-                isSelectionAvailabilityChecked = true;
-                try {
-                    selection = new WLClipboard("Selection", true);
-                } catch (UnsupportedOperationException ignored) {
-                }
-            }
         }
         return selection;
     }

@@ -32,15 +32,23 @@ import java.awt.datatransfer.DataFlavor;
 import java.awt.datatransfer.FlavorTable;
 import java.awt.datatransfer.Transferable;
 import java.io.FileDescriptor;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.util.Collections;
+import java.util.LinkedList;
+import java.util.List;
 import java.util.Objects;
 import java.util.SortedMap;
 
 public final class WLClipboard extends SunClipboard {
 
     private final long ID;
-    private final boolean isPrimary;
+    private final boolean isPrimary; // used from native
+
+    private long clipboardNativePtr;     // guarded by 'this'
+    private List<Long> clipboardFormats; // guarded by 'this'
+    private int clipboardFD;             // guarded by 'this'
 
     static {
         initIDs();
@@ -88,7 +96,7 @@ public final class WLClipboard extends SunClipboard {
         }
     }
 
-    private void transferContentsWithType(Transferable contents, String mime, int destFD) {
+    private void transferContentsWithType(Transferable contents, String mime, int destFD) throws IOException {
         // Called from native
         assert SwingUtilities.isEventDispatchThread();
         Objects.requireNonNull(contents);
@@ -109,24 +117,60 @@ public final class WLClipboard extends SunClipboard {
                 // TODO: large data transfer will block EDT for a long time;
                 //  implement an option to do the writing on a dedicated thread.
                 out.write(bytes);
-            } catch (IOException ignored) {
             }
         }
     }
 
     @Override
     protected long[] getClipboardFormats() {
-        return new long[0];
+        synchronized (this) {
+            if (clipboardFormats != null && !clipboardFormats.isEmpty()) {
+                long[] res = new long[clipboardFormats.size()];
+                for (int i = 0; i < res.length; i++) {
+                    res[i] = clipboardFormats.get(i);
+                }
+                return res;
+            } else {
+                return null;
+            }
+        }
     }
 
     @Override
     protected byte[] getClipboardData(long format) throws IOException {
-        return new byte[0];
+        synchronized (this) {
+            if (clipboardNativePtr != 0) {
+                WLDataTransferer wlDataTransferer = (WLDataTransferer) DataTransferer.getInstance();
+                String mime = wlDataTransferer.getNativeForFormat(format);
+                int fd = requestDataInFormat(clipboardNativePtr, mime);
+                FileDescriptor javaFD = new FileDescriptor();
+                jdk.internal.access.SharedSecrets.getJavaIOFileDescriptorAccess().set(javaFD, fd);
+                try (var in = new FileInputStream(javaFD)) {
+                    byte[] bytes = in.readAllBytes();
+                }
+            }
+        }
+        return null;
     }
+
+    private void handleClipboardFormat(long nativePtr, String mime) {
+        // Called from native
+        WLDataTransferer wlDataTransferer = (WLDataTransferer) DataTransferer.getInstance();
+        Long format = wlDataTransferer.getFormatForNativeAsLong(mime);
+
+        synchronized (this) {
+            if (clipboardNativePtr != nativePtr) {
+                clipboardFormats = new LinkedList<>();
+                clipboardNativePtr = nativePtr;
+            }
+            clipboardFormats.add(format);
+        }
+    }
+
+
 
     @Override
     protected void registerClipboardViewerChecked() {
-
     }
 
     @Override
@@ -138,4 +182,6 @@ public final class WLClipboard extends SunClipboard {
     private native long initNative(boolean isPrimary);
     private native void offerData(long eventSerial, String[] mime, Object data);
     private native void cancelOffer(long eventSerial);
+
+    private native int requestDataInFormat(long clipboardNativePtr, String mime);
 }
