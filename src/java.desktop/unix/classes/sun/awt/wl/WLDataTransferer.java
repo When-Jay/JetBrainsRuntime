@@ -45,6 +45,7 @@ import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.HashMap;
+import java.util.Objects;
 
 public class WLDataTransferer extends DataTransferer {
 
@@ -81,6 +82,12 @@ public class WLDataTransferer extends DataTransferer {
         return isMimeFormat(format, "image");
     }
 
+    @Override
+    public boolean isTextFormat(long format) {
+        return super.isTextFormat(format)
+                || isMimeFormat(format, "text");
+    }
+
     private boolean isMimeFormat(long format, String primaryType) {
         String nat = getNativeForFormat(format);
 
@@ -102,13 +109,26 @@ public class WLDataTransferer extends DataTransferer {
 
     @Override
     protected Long getFormatForNativeAsLong(String formatName) {
+        Objects.requireNonNull(formatName);
         synchronized (this) {
-            long nextID = nameToLong.size();
-            Long thisID = nameToLong.putIfAbsent(formatName, nextID);
+            Long thisID = nameToLong.get(formatName);
             if (thisID == null) {
-                longToName.put(nextID, formatName);
-                thisID = nextID;
+                // Some apps request data in a format that only differs from
+                // the advertised in the case of some of the letters.
+                // IMO we can ignore the case and find an equivalent.
+                var matchingKey = nameToLong.keySet().stream()
+                        .filter(formatName::equalsIgnoreCase).findAny()
+                        .orElse(null);
+                if (matchingKey != null) {
+                    thisID = nameToLong.get(matchingKey);
+                } else {
+                    long nextID = nameToLong.size();
+                    thisID = nextID;
+                    longToName.put(thisID, formatName);
+                }
+                nameToLong.put(formatName, thisID);
             }
+
             return thisID;
         }
     }

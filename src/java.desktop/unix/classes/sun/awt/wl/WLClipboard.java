@@ -90,33 +90,27 @@ public final class WLClipboard extends SunClipboard {
 
     private void transferContentsWithType(Transferable contents, String mime, int destFD) {
         // Called from native
+        assert SwingUtilities.isEventDispatchThread();
         Objects.requireNonNull(contents);
         Objects.requireNonNull(mime);
-        if (!SwingUtilities.isEventDispatchThread()) {
-            throw new InternalError("Clipboard data transfer must be on EDT");
-        }
-        assert SwingUtilities.isEventDispatchThread();
 
         WLDataTransferer wlDataTransferer = (WLDataTransferer) DataTransferer.getInstance();
         SortedMap<Long,DataFlavor> formatMap =
                 wlDataTransferer.getFormatsForTransferable(contents, flavorTable);
 
-        try {
-            long targetFormat = wlDataTransferer.getFormatForNativeAsLong(mime);
-            DataFlavor flavor = formatMap.get(targetFormat);
-            if (flavor != null) {
-                byte[] bytes = wlDataTransferer.translateTransferable(contents, flavor, targetFormat);
-                FileDescriptor javaDestFD = new FileDescriptor();
-                jdk.internal.access.SharedSecrets.getJavaIOFileDescriptorAccess().set(javaDestFD, destFD);
+        long targetFormat = wlDataTransferer.getFormatForNativeAsLong(mime);
+        DataFlavor flavor = formatMap.get(targetFormat);
+        if (flavor != null) {
+            FileDescriptor javaDestFD = new FileDescriptor();
+            jdk.internal.access.SharedSecrets.getJavaIOFileDescriptorAccess().set(javaDestFD, destFD);
 
-                try (var out = new FileOutputStream(javaDestFD)) {
-                    // TODO: large data transfer will block EDT for a long time;
-                    //  implement an option to do the writing on a dedicated thread.
-                    out.write(bytes);
-                } catch (IOException ignored) {
-                }
+            try (var out = new FileOutputStream(javaDestFD)) {
+                byte[] bytes = wlDataTransferer.translateTransferable(contents, flavor, targetFormat);
+                // TODO: large data transfer will block EDT for a long time;
+                //  implement an option to do the writing on a dedicated thread.
+                out.write(bytes);
+            } catch (IOException ignored) {
             }
-        } catch (IllegalArgumentException | IOException ignored) {
         }
     }
 
