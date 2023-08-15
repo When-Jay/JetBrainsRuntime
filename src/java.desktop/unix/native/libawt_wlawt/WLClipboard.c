@@ -543,11 +543,35 @@ Java_sun_awt_wl_WLClipboard_requestDataInFormat(
     const char * mimeType = (*env)->GetStringUTFChars(env, mimeTypeJava, NULL);
     if (mimeType) {
         int fds[2];
-        pipe(fds);
-        wl_data_offer_receive(offer, mimeType, fds[1]);
+        int rc = pipe(fds);
+        if (rc == 0) {
+            //struct wl_display * wrappedDisplay = wl_proxy_create_wrapper(wl_display);
+            //struct wl_event_queue * auxQueue = wl_display_create_queue(wl_display);
+            //wl_proxy_set_queue((struct wl_proxy*)offer, auxQueue);
+            wl_data_offer_receive(offer, mimeType, fds[1]);
+            close(fds[1]);
+            //rc = wl_flush_to_server(env);
+            //if (rc == 0) {
+            //    wl_display_roundtrip_queue(wl_display, auxQueue);
+            //}
 
+
+            if (rc == 0) {
+                while (1) {
+                    char buf[1024];
+                    ssize_t n = read(fds[0], buf, sizeof(buf));
+                    if (n <= 0) {
+                        break;
+                    }
+                    fwrite(buf, 1, n, stdout);
+                }
+                printf("\nDONE.\n");
+            }
+            close(fds[0]);
+        } else {
+            fds[0] = -1;
+        }
         (*env)->ReleaseStringUTFChars(env, mimeTypeJava, mimeType);
-        close(fds[0]);
         return fds[0];
     }
 

@@ -143,11 +143,13 @@ public final class WLClipboard extends SunClipboard {
                 WLDataTransferer wlDataTransferer = (WLDataTransferer) DataTransferer.getInstance();
                 String mime = wlDataTransferer.getNativeForFormat(format);
                 int fd = requestDataInFormat(clipboardNativePtr, mime);
-                FileDescriptor javaFD = new FileDescriptor();
+                /*FileDescriptor javaFD = new FileDescriptor();
                 jdk.internal.access.SharedSecrets.getJavaIOFileDescriptorAccess().set(javaFD, fd);
                 try (var in = new FileInputStream(javaFD)) {
                     byte[] bytes = in.readAllBytes();
                 }
+
+                 */
             }
         }
         return null;
