@@ -39,6 +39,7 @@ typedef void* data_source_t;
 
 static jmethodID transferContentsWithTypeMID; // WLCipboard.transferContentsWithType()
 static jmethodID handleClipboardFormatMID;    // WLCipboard.handleClipboardFormat()
+static jmethodID handleNewClipboardMID;       // WLCipboard.handleNewClipboard()
 static jfieldID  isPrimaryFID; // WLClipboard.isPrimary
 
 typedef struct DataSourcePayload {
@@ -77,6 +78,7 @@ DataOfferPayload_Create(jobject clipboard)
     return payload;
 }
 
+// TODO: unused
 static void
 DataOfferPayload_Destroy(DataOfferPayload* payload)
 {
@@ -161,13 +163,19 @@ RegisterDataOfferWithMimeType(DataOfferPayload *payload, void * offer, const cha
 }
 
 static void
+RegisterDataOffer(DataOfferPayload *payload, void * offer)
+{
+    JNIEnv *env = getEnv();
+    (*env)->CallVoidMethod(env, payload->clipboard, handleNewClipboardMID, ptr_to_jlong(offer));
+    EXCEPTION_CLEAR(env);
+}
+
+static void
 zwp_selection_offer(
         void *data,
         struct zwp_primary_selection_offer_v1 *offer,
         const char *mime_type)
 {
-    printf("OFFER %p MIME type: %s\n", offer, mime_type);
-
     assert (data != NULL);
     RegisterDataOfferWithMimeType(data, offer, mime_type);
 }
@@ -191,9 +199,8 @@ zwp_selection_device_handle_selection(
         struct zwp_primary_selection_device_v1 *device,
         struct zwp_primary_selection_offer_v1 *offer)
 {
-    if (offer != NULL) {
-        printf("Ready to receive selection\n");
-    }
+    assert (data != NULL);
+    RegisterDataOffer(data, offer);
 }
 
 static const struct zwp_primary_selection_device_v1_listener zwp_selection_device_listener = {
@@ -214,8 +221,6 @@ static void wl_offer(
         struct wl_data_offer *offer,
         const char *mime_type)
 {
-    printf("OFFER %p MIME type: %s\n", offer, mime_type);
-
     assert (data != NULL);
     RegisterDataOfferWithMimeType(data, offer, mime_type);
 }
@@ -239,7 +244,6 @@ static void data_device_handle_data_offer(
         struct wl_data_device *data_device,
         struct wl_data_offer *offer)
 {
-    printf("NEW OFFER %p\n", offer);
     wl_data_offer_add_listener(offer, &wl_data_offer_listener, data);
 }
 
@@ -248,13 +252,8 @@ static void data_device_handle_selection(
         struct wl_data_device *data_device,
         struct wl_data_offer *offer)
 {
-    printf("OFFER %p selection\n", offer);
-    // An application has set the clipboard contents
-    if (offer == NULL) {
-        printf("Clipboard is empty\n");
-    } else {
-        printf("Ready to receive clipboard\n");
-    }
+    assert (data != NULL);
+    RegisterDataOffer(data, offer);
 }
 
 static void
@@ -367,6 +366,12 @@ initJavaRefs(JNIEnv* env, jclass wlClipboardClass)
                       wlClipboardClass,
                       "handleClipboardFormat",
                       "(JLjava/lang/String;)V",
+                      JNI_FALSE);
+
+    GET_METHOD_RETURN(handleNewClipboardMID,
+                      wlClipboardClass,
+                      "handleNewClipboard",
+                      "(J)V",
                       JNI_FALSE);
 
     GET_FIELD_RETURN(isPrimaryFID,
@@ -537,43 +542,56 @@ Java_sun_awt_wl_WLClipboard_requestDataInFormat(
         jlong clipboardNativePtr,
         jstring mimeTypeJava)
 {
-    struct wl_data_offer * offer = jlong_to_ptr(clipboardNativePtr);
-    assert(offer != NULL);
+    assert (clipboardNativePtr != 0);
+    const jboolean isPrimary = isPrimarySelectionClipboard(env, obj);
+
+    int fd = -1; // The file descriptor the clipboard data will be read from by Java
 
     const char * mimeType = (*env)->GetStringUTFChars(env, mimeTypeJava, NULL);
     if (mimeType) {
         int fds[2];
         int rc = pipe(fds);
         if (rc == 0) {
-            //struct wl_display * wrappedDisplay = wl_proxy_create_wrapper(wl_display);
-            //struct wl_event_queue * auxQueue = wl_display_create_queue(wl_display);
-            //wl_proxy_set_queue((struct wl_proxy*)offer, auxQueue);
-            wl_data_offer_receive(offer, mimeType, fds[1]);
-            close(fds[1]);
-            //rc = wl_flush_to_server(env);
-            //if (rc == 0) {
-            //    wl_display_roundtrip_queue(wl_display, auxQueue);
-            //}
-
-
-            if (rc == 0) {
-                while (1) {
-                    char buf[1024];
-                    ssize_t n = read(fds[0], buf, sizeof(buf));
-                    if (n <= 0) {
-                        break;
-                    }
-                    fwrite(buf, 1, n, stdout);
-                }
-                printf("\nDONE.\n");
+            if (isPrimary) {
+                struct zwp_primary_selection_offer_v1 * offer = jlong_to_ptr(clipboardNativePtr);
+                zwp_primary_selection_offer_v1_receive(offer, mimeType, fds[1]);
+            } else {
+                struct wl_data_offer * offer = jlong_to_ptr(clipboardNativePtr);
+                wl_data_offer_receive(offer, mimeType, fds[1]);
             }
-            close(fds[0]);
-        } else {
-            fds[0] = -1;
+            close(fds[1]); // close the "sender" end of the pipe
+
+            rc = wl_flush_to_server(env);
+            if (rc == 0) {
+                wl_display_roundtrip(wl_display);
+                // TODO: roundtrip to give us a chance to write the data to the
+                //       other end of the pipe
+
+                // will return the "receiver" end of the pipe to Java
+                fd = fds[0];
+            } else {
+                close(fds[0]);
+            }
         }
         (*env)->ReleaseStringUTFChars(env, mimeTypeJava, mimeType);
-        return fds[0];
     }
 
-    return -1;
+    return fd;
+}
+
+JNIEXPORT void JNICALL
+Java_sun_awt_wl_WLClipboard_destroyClipboard(
+        JNIEnv *env,
+        jobject obj,
+        jlong clipboardNativePtr)
+{
+    assert(clipboardNativePtr != 0);
+
+    if (isPrimarySelectionClipboard(env, obj)) {
+        struct zwp_primary_selection_offer_v1 * offer = jlong_to_ptr(clipboardNativePtr);
+        zwp_primary_selection_offer_v1_destroy(offer);
+    } else {
+        struct wl_data_offer * offer = jlong_to_ptr(clipboardNativePtr);
+        wl_data_offer_destroy(offer);
+    }
 }
