@@ -25,6 +25,7 @@
 
 package java.awt;
 
+import java.awt.Point;
 import java.awt.dnd.DropTarget;
 import java.awt.event.AWTEventListener;
 import java.awt.event.ComponentEvent;
@@ -680,6 +681,14 @@ public class Container extends Component {
         } else {
             return getNativeContainer();
         }
+    }
+
+    /**
+     * fix fcitx position
+     * @return Point
+     */
+    public Point getPeerLocationOnScreen(){
+        return peer.getLocationOnScreen();
     }
 
     /**
